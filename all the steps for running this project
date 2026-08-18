@@ -1,0 +1,146 @@
+1. Install the prerequisites
+
+Install:
+
+Python 3.11 or 3.12
+Git (optional, but useful)
+A working microphone if you want voice commands
+
+During Python installation, check “Add Python to PATH.”
+
+2. Get the project
+
+If it's already on your PC, open Command Prompt in the ULTRON folder.
+
+For example:
+
+cd C:\Users\Acer\Desktop\ULTRON-V9
+
+If it's on GitHub:
+
+git clone YOUR_GITHUB_REPOSITORY_URL
+cd ULTRON-V9
+3. Create a virtual environment
+python -m venv venv
+
+Activate it:
+
+venv\Scripts\activate
+
+You should now see something like:
+
+(venv) C:\Users\Acer\Desktop\ULTRON-V9>
+4. Upgrade pip
+python -m pip install --upgrade pip
+5. Install the dependencies
+
+If the project contains requirements.txt:
+
+pip install -r requirements.txt
+
+If PyAudio gives you problems on Windows, tell me the exact error rather than installing random packages—we can fix that specifically.
+
+6. Configure the Gemini API key
+
+Since your ULTRON version uses Gemini, create an environment variable.
+
+In Command Prompt:
+
+setx GEMINI_API_KEY "YOUR_GEMINI_API_KEY"
+
+Then close Command Prompt and open a new one.
+
+Check it:
+
+echo %GEMINI_API_KEY%
+
+Don't put the actual API key into GitHub or commit it to the repository.
+
+7. Configure Telegram, if V9 uses Telegram
+
+If your version has Telegram functionality, configure the required values according to the project's config/environment setup.
+
+For example, if it expects environment variables:
+
+setx ULTRON_TELEGRAM_TOKEN "YOUR_BOT_TOKEN"
+setx ULTRON_TELEGRAM_USER_ID "YOUR_USER_ID"
+
+Then reopen Command Prompt.
+
+If V9 instead uses config.json, make sure that file exists in the location expected by the code.
+
+8. Test Python
+
+From the project directory:
+
+python --version
+
+Then:
+
+python -c "import sys; print(sys.version)"
+
+And verify the important packages:
+
+pip list
+9. Run ULTRON
+
+The exact command depends on the filename.
+
+If the main file is main.py:
+
+python main.py
+
+If it's ultron.py:
+
+python ultron.py
+
+If it's ULTRON.py:
+
+python ULTRON.py
+
+You can see the Python files with:
+
+dir *.py
+10. If you want voice mode
+
+Make sure Windows sees your microphone:
+
+Settings → System → Sound → Input
+
+Then start ULTRON normally.
+
+If you get an error such as:
+
+PyAudio
+
+or:
+
+No default input device
+
+send me the full error, and I'll troubleshoot that part.
+
+11. Run it again later
+
+Every time you open a new Command Prompt:
+
+cd C:\path\to\ULTRON-V9
+venv\Scripts\activate
+python main.py
+
+Replace main.py with your actual entry-point file.
+
+12. Recommended project structure
+
+A clean setup would look roughly like:
+
+ULTRON-V9/
+│
+├── venv/
+├── main.py
+├── requirements.txt
+├── .gitignore
+├── README.md
+├── config.json
+├── modules/
+├── assets/
+└── ...
