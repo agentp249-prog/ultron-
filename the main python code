@@ -1,0 +1,804 @@
+# ULTRON V9
+# Windows AI Desktop Assistant
+#
+# Features:
+# - Gemini AI
+# - Typed commands
+# - Voice input
+# - Piper TTS
+# - Windows application launching
+# - File searching
+# - Web searching
+# - Optional Telegram remote control
+
+import os
+import re
+import sys
+import subprocess
+import threading
+import webbrowser
+from pathlib import Path
+from datetime import datetime
+
+# ============================================================
+# CONFIGURATION
+# ============================================================
+
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+TELEGRAM_TOKEN = os.getenv("ULTRON_TELEGRAM_TOKEN")
+TELEGRAM_USER_ID = os.getenv("ULTRON_TELEGRAM_USER_ID")
+
+# Piper model name.
+# Change this if you have a different Piper model installed.
+PIPER_MODEL = "en_US-lessac-low"
+
+BASE_DIR = Path(__file__).resolve().parent
+VOICE_DIR = BASE_DIR / "voice_output"
+VOICE_DIR.mkdir(exist_ok=True)
+
+# ============================================================
+# GEMINI
+# ============================================================
+
+try:
+    from google import genai
+
+    if GEMINI_API_KEY:
+        client = genai.Client(api_key=GEMINI_API_KEY)
+    else:
+        client = None
+
+except ImportError:
+    client = None
+    print("WARNING: google-genai is not installed.")
+
+# ============================================================
+# OPTIONAL PACKAGES
+# ============================================================
+
+try:
+    import speech_recognition as sr
+    SPEECH_AVAILABLE = True
+except ImportError:
+    SPEECH_AVAILABLE = False
+
+try:
+    from telegram import Update
+    from telegram.ext import (
+        Application,
+        CommandHandler,
+        MessageHandler,
+        ContextTypes,
+        filters,
+    )
+    TELEGRAM_AVAILABLE = True
+except ImportError:
+    TELEGRAM_AVAILABLE = False
+
+
+# ============================================================
+# ULTRON CORE
+# ============================================================
+
+class Ultron:
+
+    def __init__(self):
+        self.running = True
+        self.history = []
+
+        self.system_prompt = """
+You are ULTRON V9, a futuristic personal AI assistant.
+
+Your personality:
+- Calm
+- Intelligent
+- Concise
+- Slightly futuristic
+- Helpful
+- Never claim to have performed an action unless it actually happened.
+
+You are running on the user's Windows computer.
+
+When the user asks a normal knowledge question, answer normally.
+
+When the user gives a computer command such as opening an application,
+searching files, or opening a website, the local command system handles it.
+
+Do not invent command results.
+"""
+
+    # --------------------------------------------------------
+    # GEMINI
+    # --------------------------------------------------------
+
+    def ask_ai(self, prompt):
+
+        if client is None:
+            return "Gemini is not configured."
+
+        try:
+            response = client.models.generate_content(
+                model="gemini-3.5-flash",
+                contents=self.system_prompt + "\n\nUser: " + prompt,
+            )
+
+            text = getattr(response, "text", None)
+
+            if not text:
+                return "I received an empty response."
+
+            return text.strip()
+
+        except Exception as e:
+            print(f"[Gemini error] {e}")
+            return "I couldn't reach my AI core."
+
+    # --------------------------------------------------------
+    # TEXT TO SPEECH
+    # --------------------------------------------------------
+
+    def speak(self, text):
+
+        if not text:
+            return
+
+        print(f"\n🔊 ULTRON: {text}")
+
+        # Remove emojis because some Windows subprocess
+        # configurations cannot encode them.
+        clean_text = re.sub(
+            r"[^\x00-\x7F]+",
+            "",
+            text
+        ).strip()
+
+        if not clean_text:
+            return
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        wav_file = VOICE_DIR / f"ultron_{timestamp}.wav"
+
+        command = [
+            sys.executable,
+            "-m",
+            "piper",
+            "-m",
+            PIPER_MODEL,
+            "--length_scale",
+            "0.9",
+            "-f",
+            str(wav_file),
+        ]
+
+        try:
+
+            subprocess.run(
+                command,
+                input=clean_text,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            if not wav_file.exists():
+                print("[VOICE] Piper did not create audio.")
+                return
+
+            # Windows audio playback
+            try:
+                import winsound
+
+                winsound.PlaySound(
+                    str(wav_file),
+                    winsound.SND_FILENAME
+                )
+
+            except Exception as e:
+                print(f"[VOICE] Playback error: {e}")
+
+        except Exception as e:
+            print(f"[VOICE] Piper error: {e}")
+
+        finally:
+
+            try:
+                if wav_file.exists():
+                    wav_file.unlink()
+            except Exception:
+                pass
+
+    # --------------------------------------------------------
+    # VOICE INPUT
+    # --------------------------------------------------------
+
+    def listen(self):
+
+        if not SPEECH_AVAILABLE:
+            print("SpeechRecognition is not installed.")
+            return None
+
+        recognizer = sr.Recognizer()
+
+        try:
+
+            with sr.Microphone() as source:
+
+                print("\n🎤 Listening...")
+
+                recognizer.adjust_for_ambient_noise(
+                    source,
+                    duration=0.3
+                )
+
+                audio = recognizer.listen(
+                    source,
+                    timeout=5,
+                    phrase_time_limit=10
+                )
+
+            print("🧠 Processing...")
+
+            text = recognizer.recognize_google(audio)
+
+            print(f"YOU: {text}")
+
+            return text
+
+        except sr.WaitTimeoutError:
+            print("No speech detected.")
+            return None
+
+        except sr.UnknownValueError:
+            print("I couldn't understand that.")
+            return None
+
+        except Exception as e:
+            print(f"Microphone error: {e}")
+            return None
+
+    # --------------------------------------------------------
+    # OPEN APPLICATION
+    # --------------------------------------------------------
+
+    def open_app(self, app):
+
+        app = app.lower().strip()
+
+        applications = {
+
+            "brave": [
+                "brave.exe"
+            ],
+
+            "chrome": [
+                "chrome.exe"
+            ],
+
+            "google chrome": [
+                "chrome.exe"
+            ],
+
+            "edge": [
+                "msedge.exe"
+            ],
+
+            "notepad": [
+                "notepad.exe"
+            ],
+
+            "calculator": [
+                "calc.exe"
+            ],
+
+            "paint": [
+                "mspaint.exe"
+            ],
+
+            "explorer": [
+                "explorer.exe"
+            ],
+
+            "file explorer": [
+                "explorer.exe"
+            ],
+
+            "cmd": [
+                "cmd.exe"
+            ],
+
+            "powershell": [
+                "powershell.exe"
+            ],
+        }
+
+        if app not in applications:
+            return f"I don't have a launcher configured for {app}."
+
+        try:
+
+            subprocess.Popen(
+                applications[app],
+                shell=False
+            )
+
+            return f"Opening {app}."
+
+        except Exception as e:
+
+            print(f"[APP ERROR] {e}")
+
+            return f"I couldn't open {app}."
+
+    # --------------------------------------------------------
+    # FILE SEARCH
+    # --------------------------------------------------------
+
+    def search_files(self, query):
+
+        query = query.lower().strip()
+
+        search_locations = [
+
+            Path.home() / "Desktop",
+            Path.home() / "Documents",
+            Path.home() / "Downloads",
+            Path.home() / "Pictures",
+            Path.home() / "Videos",
+
+        ]
+
+        matches = []
+
+        for location in search_locations:
+
+            if not location.exists():
+                continue
+
+            try:
+
+                for item in location.rglob("*"):
+
+                    if len(matches) >= 20:
+                        break
+
+                    try:
+
+                        if query in item.name.lower():
+                            matches.append(item)
+
+                    except Exception:
+                        continue
+
+            except Exception:
+                continue
+
+        if not matches:
+            return f"I couldn't find any files matching '{query}'."
+
+        result = f"I found {len(matches)} matching file(s):\n"
+
+        for item in matches:
+            result += f"\n• {item}"
+
+        return result
+
+    # --------------------------------------------------------
+    # OPEN FILE
+    # --------------------------------------------------------
+
+    def open_file(self, path_text):
+
+        path = Path(path_text.strip('"'))
+
+        if not path.exists():
+            return "That file does not exist."
+
+        try:
+
+            os.startfile(str(path))
+
+            return f"Opening {path.name}."
+
+        except Exception as e:
+
+            print(f"[FILE ERROR] {e}")
+
+            return "I couldn't open that file."
+
+    # --------------------------------------------------------
+    # WEB SEARCH
+    # --------------------------------------------------------
+
+    def web_search(self, query):
+
+        query = query.strip()
+
+        if not query:
+            return "Tell me what you want me to search for."
+
+        url = (
+            "https://www.google.com/search?q="
+            + webbrowser.quote(query)
+            if hasattr(webbrowser, "quote")
+            else "https://www.google.com/search?q="
+            + query.replace(" ", "+")
+        )
+
+        webbrowser.open(url)
+
+        return f"Searching the web for {query}."
+
+    # --------------------------------------------------------
+    # WEBSITE
+    # --------------------------------------------------------
+
+    def open_website(self, url):
+
+        if not url.startswith(("http://", "https://")):
+            url = "https://" + url
+
+        try:
+
+            webbrowser.open(url)
+
+            return f"Opening {url}."
+
+        except Exception:
+            return "I couldn't open that website."
+
+    # --------------------------------------------------------
+    # COMMAND PROCESSOR
+    # --------------------------------------------------------
+
+    def process_command(self, command):
+
+        if not command:
+            return ""
+
+        original = command.strip()
+        command = original.lower().strip()
+
+        # -----------------------------
+        # EXIT
+        # -----------------------------
+
+        if command in (
+            "exit",
+            "quit",
+            "shutdown ultron",
+            "goodbye",
+        ):
+
+            self.running = False
+            return "ULTRON shutting down."
+
+        # -----------------------------
+        # GREETING
+        # -----------------------------
+
+        if command in (
+            "hello",
+            "hello ultron",
+            "hi ultron",
+            "hey ultron",
+            "hey",
+            "hi",
+        ):
+
+            return "Hello. How can I help you?"
+
+        # -----------------------------
+        # OPEN APP
+        # -----------------------------
+
+        match = re.match(
+            r"^(?:open|launch|start)\s+(.+)$",
+            command
+        )
+
+        if match:
+
+            app = match.group(1)
+
+            return self.open_app(app)
+
+        # -----------------------------
+        # WEB SEARCH
+        # -----------------------------
+
+        match = re.match(
+            r"^(?:search web for|search the web for|google)\s+(.+)$",
+            original,
+            re.IGNORECASE
+        )
+
+        if match:
+
+            return self.web_search(
+                match.group(1)
+            )
+
+        # -----------------------------
+        # FIND FILE
+        # -----------------------------
+
+        match = re.match(
+            r"^(?:find|search for)\s+(?:file\s+)?(.+)$",
+            original,
+            re.IGNORECASE
+        )
+
+        if match:
+
+            query = match.group(1)
+
+            # Avoid interpreting web searches as file searches.
+            if not query.lower().startswith("web "):
+                return self.search_files(query)
+
+        # -----------------------------
+        # OPEN WEBSITE
+        # -----------------------------
+
+        match = re.match(
+            r"^(?:open website|visit)\s+(.+)$",
+            original,
+            re.IGNORECASE
+        )
+
+        if match:
+
+            return self.open_website(
+                match.group(1)
+            )
+
+        # -----------------------------
+        # NORMAL AI QUESTION
+        # -----------------------------
+
+        return self.ask_ai(original)
+
+    # --------------------------------------------------------
+    # HANDLE COMMAND
+    # --------------------------------------------------------
+
+    def handle(self, command):
+
+        print(f"\n[COMMAND]\n{command}")
+
+        response = self.process_command(command)
+
+        print(f"\n[ULTRON]\n{response}")
+
+        # Speak asynchronously so the command interface
+        # doesn't freeze while voice is playing.
+        threading.Thread(
+            target=self.speak,
+            args=(response,),
+            daemon=True
+        ).start()
+
+        return response
+
+
+# ============================================================
+# TELEGRAM
+# ============================================================
+
+ultron = Ultron()
+
+
+def authorized(update):
+
+    if not TELEGRAM_USER_ID:
+        return False
+
+    if not update.effective_user:
+        return False
+
+    return str(update.effective_user.id) == str(
+        TELEGRAM_USER_ID
+    )
+
+
+async def telegram_start(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    if not authorized(update):
+        return
+
+    await update.message.reply_text(
+        "ULTRON V9 ONLINE."
+    )
+
+
+async def telegram_status(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    if not authorized(update):
+        return
+
+    await update.message.reply_text(
+        "ULTRON V9 STATUS\n\n"
+        "CORE: ONLINE\n"
+        "AI: ONLINE\n"
+        "VOICE: ONLINE\n"
+        "TELEGRAM: ONLINE"
+    )
+
+
+async def telegram_message(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    if not authorized(update):
+        return
+
+    text = update.message.text
+
+    response = ultron.handle(text)
+
+    await update.message.reply_text(
+        response[:4000]
+    )
+
+
+def start_telegram():
+
+    if not TELEGRAM_TOKEN:
+        print("Telegram: DISABLED")
+        return
+
+    if not TELEGRAM_AVAILABLE:
+        print("Telegram package is not installed.")
+        return
+
+    print("Telegram: ONLINE")
+
+    try:
+
+        application = (
+            Application.builder()
+            .token(TELEGRAM_TOKEN)
+            .build()
+        )
+
+        application.add_handler(
+            CommandHandler(
+                "start",
+                telegram_start
+            )
+        )
+
+        application.add_handler(
+            CommandHandler(
+                "status",
+                telegram_status
+            )
+        )
+
+        application.add_handler(
+            MessageHandler(
+                filters.TEXT & ~filters.COMMAND,
+                telegram_message
+            )
+        )
+
+        application.run_polling(
+            drop_pending_updates=True
+        )
+
+    except Exception as e:
+
+        print(f"Telegram error: {e}")
+
+
+# ============================================================
+# TERMINAL
+# ============================================================
+
+def print_banner():
+
+    print(
+        r"""
+╔════════════════════════════════════════════╗
+║                                            ║
+║              U L T R O N   V 9             ║
+║                                            ║
+║             AI CORE INITIALIZED            ║
+║                                            ║
+╠════════════════════════════════════════════╣
+║                                            ║
+║  GEMINI     : ONLINE                       ║
+║  VOICE      : READY                        ║
+║  FILE CORE  : READY                        ║
+║  WEB CORE   : READY                        ║
+║  TELEGRAM   : OPTIONAL                     ║
+║                                            ║
+╚════════════════════════════════════════════╝
+"""
+    )
+
+
+# ============================================================
+# MAIN
+# ============================================================
+
+def main():
+
+    print_banner()
+
+    if not GEMINI_API_KEY:
+        print(
+            "\n⚠️ GEMINI_API_KEY is not configured."
+        )
+
+    if TELEGRAM_TOKEN:
+        threading.Thread(
+            target=start_telegram,
+            daemon=True
+        ).start()
+    else:
+        print(
+            "Telegram: DISABLED"
+        )
+
+    print(
+        "\nULTRON V9 READY."
+    )
+
+    print(
+        "Type a command or type 'voice' to speak."
+    )
+
+    print(
+        "Type 'exit' to shut down.\n"
+    )
+
+    while ultron.running:
+
+        try:
+
+            command = input("YOU > ").strip()
+
+            if not command:
+                continue
+
+            if command.lower() in (
+                "voice",
+                "listen",
+                "voice command",
+            ):
+
+                command = ultron.listen()
+
+                if not command:
+                    continue
+
+            ultron.handle(command)
+
+        except KeyboardInterrupt:
+
+            print(
+                "\n\nULTRON shutting down."
+            )
+            break
+
+        except Exception as e:
+
+            print(
+                f"\n[ERROR] {e}"
+            )
+
+
+if __name__ == "__main__":
+    main()
